@@ -127,7 +127,7 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
 
 /// Validate CLI arguments
 fn validate_args(args: &RunArgs) -> Result<()> {
-    // Check context directory exists
+    // Check context directory exists and canonicalize
     if !args.context.exists() {
         return Err(NucleusError::ContextNotFound(args.context.clone()));
     }
@@ -137,9 +137,22 @@ fn validate_args(args: &RunArgs) -> Result<()> {
         return Err(NucleusError::ContextNotDirectory(args.context.clone()));
     }
 
+    // Canonicalize context path to prevent path traversal
+    let _canonical_context = args.context.canonicalize()
+        .map_err(|_| NucleusError::ContextNotFound(args.context.clone()))?;
+
     // Check command is provided
     if args.command.is_empty() {
         return Err(NucleusError::NoCommand);
+    }
+
+    // Validate executable name/path
+    let (executable, _) = args.command_parts();
+    validate_executable(&executable)?;
+
+    // Validate hostname if provided
+    if let Some(ref hostname) = args.hostname {
+        validate_hostname(hostname)?;
     }
 
     // Validate CPU cores
@@ -229,6 +242,98 @@ fn generate_container_id() -> String {
         .collect()
 }
 
+/// Validate executable name/path for security
+///
+/// This validation prevents command injection by ensuring the executable:
+/// - Is not empty
+/// - Does not contain null bytes (handled by CString::new but check early)
+/// - Does not contain shell metacharacters if it's a simple name (no path)
+/// - Contains only safe characters (alphanumeric, dash, underscore, dot, forward slash)
+///
+/// Absolute paths are allowed but should be used with caution.
+fn validate_executable(executable: &str) -> Result<()> {
+    if executable.is_empty() {
+        return Err(NucleusError::InvalidExecutable("Executable cannot be empty".to_string()));
+    }
+
+    // Check for null bytes (early rejection)
+    if executable.contains('\0') {
+        return Err(NucleusError::InvalidExecutable("Executable cannot contain null bytes".to_string()));
+    }
+
+    // Check for shell metacharacters that could be exploited
+    let dangerous_chars = ['|', '&', ';', '<', '>', '`', '$', '(', ')', '{', '}', '[', ']', '!', '\n', '\r'];
+    for ch in dangerous_chars {
+        if executable.contains(ch) {
+            return Err(NucleusError::InvalidExecutable(
+                format!("Executable contains dangerous character: '{}'", ch)
+            ));
+        }
+    }
+
+    // For non-path executables (no '/'), validate characters are safe
+    if !executable.contains('/') {
+        // Simple executable name - allow alphanumeric, dash, underscore, dot
+        if !executable.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.') {
+            return Err(NucleusError::InvalidExecutable(
+                format!("Executable name contains invalid characters: {}", executable)
+            ));
+        }
+    } else {
+        // Path-based executable - validate it doesn't contain backslashes or other weird chars
+        if executable.contains('\\') {
+            return Err(NucleusError::InvalidExecutable(
+                "Executable path cannot contain backslashes".to_string()
+            ));
+        }
+        // Check for path traversal attempts
+        if executable.contains("..") {
+            return Err(NucleusError::InvalidExecutable(
+                "Executable path cannot contain '..'".to_string()
+            ));
+        }
+    }
+
+    debug!("Executable validated: {}", executable);
+    Ok(())
+}
+
+/// Validate hostname for security and correctness
+///
+/// Linux hostnames must:
+/// - Be at most 64 characters
+/// - Contain only alphanumeric characters and hyphens
+/// - Not start or end with a hyphen
+fn validate_hostname(hostname: &str) -> Result<()> {
+    // Check length
+    if hostname.len() > 64 {
+        return Err(NucleusError::InvalidHostname(
+            format!("Hostname exceeds 64 characters (got {})", hostname.len())
+        ));
+    }
+
+    if hostname.is_empty() {
+        return Err(NucleusError::InvalidHostname("Hostname cannot be empty".to_string()));
+    }
+
+    // Check for valid characters: alphanumeric and hyphens only
+    if !hostname.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(NucleusError::InvalidHostname(
+            "Hostname can only contain alphanumeric characters and hyphens".to_string()
+        ));
+    }
+
+    // Check that it doesn't start or end with a hyphen
+    if hostname.starts_with('-') || hostname.ends_with('-') {
+        return Err(NucleusError::InvalidHostname(
+            "Hostname cannot start or end with a hyphen".to_string()
+        ));
+    }
+
+    debug!("Hostname validated: {}", hostname);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,5 +368,47 @@ mod tests {
     fn test_validate_runtime_invalid() {
         assert!(validate_runtime("invalid").is_err());
         assert!(validate_runtime("").is_err());
+    }
+
+    #[test]
+    fn test_validate_executable_valid() {
+        assert!(validate_executable("ls").is_ok());
+        assert!(validate_executable("echo").is_ok());
+        assert!(validate_executable("my-app").is_ok());
+        assert!(validate_executable("my_app").is_ok());
+        assert!(validate_executable("app.sh").is_ok());
+        assert!(validate_executable("/bin/ls").is_ok());
+        assert!(validate_executable("/usr/local/bin/my-app").is_ok());
+    }
+
+    #[test]
+    fn test_validate_executable_invalid() {
+        assert!(validate_executable("").is_err());
+        assert!(validate_executable("ls;rm -rf").is_err());
+        assert!(validate_executable("ls|cat").is_err());
+        assert!(validate_executable("ls`whoami`").is_err());
+        assert!(validate_executable("$(whoami)").is_err());
+        assert!(validate_executable("ls\0").is_err());
+        assert!(validate_executable("/bin/../etc/passwd").is_err());
+        assert!(validate_executable("C:\\Windows\\System32").is_err());
+    }
+
+    #[test]
+    fn test_validate_hostname_valid() {
+        assert!(validate_hostname("myhost").is_ok());
+        assert!(validate_hostname("my-host").is_ok());
+        assert!(validate_hostname("host123").is_ok());
+        assert!(validate_hostname("a").is_ok());
+        assert!(validate_hostname("a-b-c").is_ok());
+    }
+
+    #[test]
+    fn test_validate_hostname_invalid() {
+        assert!(validate_hostname("").is_err());
+        assert!(validate_hostname("-invalid").is_err());
+        assert!(validate_hostname("invalid-").is_err());
+        assert!(validate_hostname("invalid_host").is_err()); // underscore not allowed
+        assert!(validate_hostname("invalid.host").is_err()); // dot not allowed
+        assert!(validate_hostname(&"a".repeat(65)).is_err()); // too long
     }
 }

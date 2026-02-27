@@ -69,6 +69,15 @@ pub enum NucleusError {
     #[error("Invalid runtime: {0}")]
     InvalidRuntime(String),
 
+    #[error("Invalid executable name: {0}")]
+    InvalidExecutable(String),
+
+    #[error("Invalid container ID: {0}")]
+    InvalidContainerId(String),
+
+    #[error("Invalid hostname: {0}")]
+    InvalidHostname(String),
+
     #[error("nix error: {0}")]
     Nix(#[from] nix::Error),
 }

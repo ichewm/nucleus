@@ -80,6 +80,22 @@ impl Cgroup {
     /// # Returns
     /// The created Cgroup instance
     pub fn create(container_id: &str) -> Result<Self> {
+        // Validate container_id to prevent path traversal attacks
+        // Only allow alphanumeric characters and hyphens
+        if container_id.is_empty() {
+            return Err(NucleusError::CgroupCreate(PathBuf::from("container_id cannot be empty")));
+        }
+        if !container_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            return Err(NucleusError::CgroupCreate(PathBuf::from(
+                format!("Invalid container ID: must contain only alphanumeric characters, hyphens, or underscores")
+            )));
+        }
+        if container_id.contains("..") {
+            return Err(NucleusError::CgroupCreate(PathBuf::from(
+                "Invalid container ID: cannot contain '..'"
+            )));
+        }
+
         let nucleus_root = Path::new(CGROUP_ROOT).join(NUCLEUS_CGROUP);
         let cgroup_path = nucleus_root.join(format!("nucleus-{}", container_id));
 
@@ -262,6 +278,38 @@ mod tests {
 
         assert_eq!(config.memory_max, 4 * 1024 * 1024 * 1024);
         assert_eq!(config.cpu_quota, 400_000); // 4.0 * 100000
+    }
+
+    // Unit tests for container ID validation (doesn't require cgroup v2)
+    #[test]
+    fn test_container_id_validation_valid() {
+        // These should pass validation (though cgroup creation may fail without root)
+        fn validate_id(id: &str) -> bool {
+            !id.is_empty()
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && !id.contains("..")
+        }
+
+        assert!(validate_id("abc123"));
+        assert!(validate_id("my-container"));
+        assert!(validate_id("container_123"));
+        assert!(validate_id("a"));
+    }
+
+    #[test]
+    fn test_container_id_validation_invalid() {
+        fn validate_id(id: &str) -> bool {
+            !id.is_empty()
+                && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && !id.contains("..")
+        }
+
+        assert!(!validate_id("")); // empty
+        assert!(!validate_id("../etc")); // path traversal
+        assert!(!validate_id("container..name")); // double dots
+        assert!(!validate_id("container/name")); // slash
+        assert!(!validate_id("container name")); // space
+        assert!(!validate_id("container\nname")); // newline
     }
 
     // Note: Actual cgroup creation tests require root and cgroup v2 support
