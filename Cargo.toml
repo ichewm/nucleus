@@ -1,0 +1,28 @@
+[package]
+name = "nucleus"
+version = "0.1.0"
+edition = "2021"
+description = "Extremely lightweight Docker alternative for agents"
+license = "MIT"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# System calls and Linux primitives
+nix = { version = "0.29", features = ["process", "signal", "mount", "sched", "user", "hostname"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# Testing
+tempfile = "3"
