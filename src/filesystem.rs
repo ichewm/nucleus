@@ -449,8 +449,12 @@ impl ContainerFilesystem {
 /// - VCS directories: .git, .svn
 /// - Build artifacts: target, node_modules
 /// - Editor files: .*.swp
+/// - Environment files: .env, .env.*
+/// - Credential files: *credential*, *secret*, *private*
+/// - Key/certificate files: *.pem, *.key, *.p12, *.crt
 fn should_include(entry: &walkdir::DirEntry) -> bool {
     let name = entry.file_name().to_str().unwrap_or("");
+    let name_lower = name.to_lowercase();
 
     // Exclude VCS directories
     if name == ".git" || name == ".svn" {
@@ -467,6 +471,31 @@ fn should_include(entry: &walkdir::DirEntry) -> bool {
     // Exclude editor swap files (.*.swp pattern)
     if name.starts_with('.') && name.ends_with(".swp") {
         debug!("Excluding editor swap file: {}", name);
+        return false;
+    }
+
+    // Exclude environment files that may contain secrets
+    if name.starts_with(".env") {
+        debug!("Excluding environment file: {}", name);
+        return false;
+    }
+
+    // Exclude credential files (case-insensitive)
+    if name_lower.contains("credential")
+        || name_lower.contains("secret")
+        || name_lower.contains("private")
+    {
+        debug!("Excluding credential file: {}", name);
+        return false;
+    }
+
+    // Exclude key/certificate files
+    if name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.ends_with(".p12")
+        || name.ends_with(".crt")
+    {
+        debug!("Excluding key/certificate file: {}", name);
         return false;
     }
 
@@ -784,5 +813,140 @@ mod tests {
             // Check that execute bits are set (0o755)
             assert_eq!(mode & 0o111, 0o111);
         }
+    }
+
+    #[test]
+    fn test_should_exclude_env_files() {
+        let temp = TempDir::new().unwrap();
+
+        // Test .env exclusion
+        fs::write(temp.path().join(".env"), "SECRET=abc").unwrap();
+        let filtered_count = WalkDir::new(temp.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count, 1, ".env should be excluded from walk");
+
+        // Test .env.local exclusion
+        let temp2 = TempDir::new().unwrap();
+        fs::write(temp2.path().join(".env.local"), "SECRET=abc").unwrap();
+        let filtered_count2 = WalkDir::new(temp2.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count2, 1, ".env.local should be excluded from walk");
+
+        // Test .env.production exclusion
+        let temp3 = TempDir::new().unwrap();
+        fs::write(temp3.path().join(".env.production"), "SECRET=abc").unwrap();
+        let filtered_count3 = WalkDir::new(temp3.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count3, 1, ".env.production should be excluded from walk");
+    }
+
+    #[test]
+    fn test_should_exclude_credential_files() {
+        let temp = TempDir::new().unwrap();
+
+        // Test credentials.json exclusion
+        fs::write(temp.path().join("credentials.json"), "{}").unwrap();
+        let filtered_count = WalkDir::new(temp.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count, 1, "credentials.json should be excluded from walk");
+
+        // Test secrets.yaml exclusion (case-insensitive)
+        let temp2 = TempDir::new().unwrap();
+        fs::write(temp2.path().join("SECRETS.yaml"), "key: value").unwrap();
+        let filtered_count2 = WalkDir::new(temp2.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count2, 1, "SECRETS.yaml should be excluded from walk");
+
+        // Test private_key exclusion (case-insensitive)
+        let temp3 = TempDir::new().unwrap();
+        fs::write(temp3.path().join("PrivateKey.pem"), "key").unwrap();
+        let filtered_count3 = WalkDir::new(temp3.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count3, 1, "PrivateKey.pem should be excluded from walk (contains 'private')");
+    }
+
+    #[test]
+    fn test_should_exclude_key_files() {
+        let temp = TempDir::new().unwrap();
+
+        // Test .key exclusion
+        fs::write(temp.path().join("server.key"), "privatekey").unwrap();
+        let filtered_count = WalkDir::new(temp.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count, 1, ".key files should be excluded from walk");
+
+        // Test .pem exclusion
+        let temp2 = TempDir::new().unwrap();
+        fs::write(temp2.path().join("cert.pem"), "certificate").unwrap();
+        let filtered_count2 = WalkDir::new(temp2.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count2, 1, ".pem files should be excluded from walk");
+
+        // Test .p12 exclusion
+        let temp3 = TempDir::new().unwrap();
+        fs::write(temp3.path().join("keystore.p12"), "pkcs12").unwrap();
+        let filtered_count3 = WalkDir::new(temp3.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count3, 1, ".p12 files should be excluded from walk");
+
+        // Test .crt exclusion
+        let temp4 = TempDir::new().unwrap();
+        fs::write(temp4.path().join("ca.crt"), "certificate").unwrap();
+        let filtered_count4 = WalkDir::new(temp4.path())
+            .into_iter()
+            .filter_entry(|e| should_include(e))
+            .count();
+        assert_eq!(filtered_count4, 1, ".crt files should be excluded from walk");
+    }
+
+    #[test]
+    fn test_populate_context_filters_secrets() {
+        let temp_source = TempDir::new().unwrap();
+        let temp_dest = TempDir::new().unwrap();
+
+        // Create files that should be included
+        fs::write(temp_source.path().join("main.rs"), "fn main() {}").unwrap();
+
+        // Create secret files that should be excluded
+        fs::write(temp_source.path().join(".env"), "SECRET=abc").unwrap();
+        fs::write(temp_source.path().join(".env.local"), "DB_PASS=pass").unwrap();
+        fs::write(temp_source.path().join("credentials.json"), "{}").unwrap();
+        fs::write(temp_source.path().join("secrets.yaml"), "api_key: xyz").unwrap();
+        fs::write(temp_source.path().join("server.key"), "privatekey").unwrap();
+        fs::write(temp_source.path().join("cert.pem"), "certificate").unwrap();
+
+        // Create filesystem and populate
+        let fs = ContainerFilesystem::new(temp_dest.path().to_path_buf(), 512 * 1024 * 1024);
+        fs.create_layout().unwrap();
+        fs.populate_context(temp_source.path()).unwrap();
+
+        // Verify included file exists
+        assert!(temp_dest.path().join("context/main.rs").exists());
+
+        // Verify secret files don't exist
+        assert!(!temp_dest.path().join("context/.env").exists());
+        assert!(!temp_dest.path().join("context/.env.local").exists());
+        assert!(!temp_dest.path().join("context/credentials.json").exists());
+        assert!(!temp_dest.path().join("context/secrets.yaml").exists());
+        assert!(!temp_dest.path().join("context/server.key").exists());
+        assert!(!temp_dest.path().join("context/cert.pem").exists());
     }
 }
