@@ -52,4 +52,7 @@ nucleus run --memory 512M --cpus 2 --context ./ctx/ -- ./agent
 
 # Use gVisor for enhanced isolation
 nucleus run --runtime gvisor --context ./ctx/ -- ./agent
+
+# Set a custom hostname for the container
+nucleus run --hostname my-container --context ./ctx/ -- ./agent
 ```
