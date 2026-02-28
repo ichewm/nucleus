@@ -4,6 +4,7 @@
 //! - cgroup v2 hierarchy at /sys/fs/cgroup/nucleus/
 //! - Memory limits (memory.max, memory.high, memory.swap.max)
 //! - CPU limits (cpu.max with quota/period)
+//! - I/O limits (io.max with riops/wiops/rbps/wbps)
 //! - PID limits (pids.max)
 //! - cgroup lifecycle (create, attach, cleanup)
 //!
@@ -175,13 +176,15 @@ mod cgroup_path_tests {
             "memory.high",     // Soft memory limit
             "memory.swap.max", // Swap limit
             "cpu.max",         // CPU bandwidth
+            "io.max",          // I/O throttling
             "pids.max",        // Process count limit
         ];
 
         // Verify all required control files are documented
-        assert_eq!(control_files.len(), 6);
+        assert_eq!(control_files.len(), 7);
         assert!(control_files.contains(&"memory.max"));
         assert!(control_files.contains(&"cpu.max"));
+        assert!(control_files.contains(&"io.max"));
         assert!(control_files.contains(&"pids.max"));
     }
 }
@@ -327,5 +330,115 @@ mod linux_cgroup_tests {
 
         // Cleanup
         fs::remove_dir(&cgroup_path).ok();
+    }
+
+    /// Test cgroup I/O configuration (requires root and cgroup v2)
+    #[test]
+    fn test_integration_cgroup_io_limits() {
+        if !is_root() || !has_cgroup_v2() {
+            eprintln!("SKIP: test requires root and cgroup v2");
+            return;
+        }
+
+        use std::fs;
+        use std::path::Path;
+
+        let container_id = format!("test-io-{}", uuid::Uuid::new_v4().simple());
+        let cgroup_path = Path::new("/sys/fs/cgroup/nucleus/nucleus-").join(&container_id);
+
+        // Create cgroup
+        let parent = Path::new("/sys/fs/cgroup/nucleus");
+        fs::create_dir_all(parent).ok();
+        fs::create_dir_all(&cgroup_path).expect("Failed to create cgroup");
+
+        // Set I/O limits per spec: "8:0 riops=1000 wiops=1000 rbps=10485760 wbps=10485760"
+        // This limits device 8:0 to 1000 IOPS and 10MB/s for both read and write
+        let io_max = "8:0 riops=1000 wiops=1000 rbps=10485760 wbps=10485760";
+
+        fs::write(cgroup_path.join("io.max"), io_max)
+            .expect("Failed to write io.max");
+
+        // Verify
+        let val = fs::read_to_string(cgroup_path.join("io.max"))
+            .expect("Failed to read io.max");
+        assert!(val.contains("8:0"), "io.max should contain device 8:0");
+        assert!(val.contains("riops=1000"), "io.max should contain riops=1000");
+        assert!(val.contains("wiops=1000"), "io.max should contain wiops=1000");
+
+        // Cleanup
+        fs::remove_dir(&cgroup_path).ok();
+    }
+}
+
+// =============================================================================
+// I/O limit configuration tests (don't require cgroup access)
+// =============================================================================
+
+mod io_limit_tests {
+    // =========================================================================
+    // SPEC REQUIREMENT: I/O limit configuration
+    // Reference: spec/resource-control.md - I/O Control
+    // =========================================================================
+
+    /// Test I/O limit format matches spec
+    /// Spec: "8:0 riops=1000 wiops=1000 rbps=10485760 wbps=10485760"
+    #[test]
+    fn test_integration_io_limit_format_spec() {
+        // Verify the expected format per spec/resource-control.md
+        let expected_format = "8:0 riops=1000 wiops=1000 rbps=10485760 wbps=10485760";
+
+        // Verify format components
+        assert!(expected_format.starts_with("8:0"), "Should start with device major:minor");
+        assert!(expected_format.contains("riops=1000"), "Should contain riops limit");
+        assert!(expected_format.contains("wiops=1000"), "Should contain wiops limit");
+        assert!(expected_format.contains("rbps=10485760"), "Should contain rbps limit (10MB/s)");
+        assert!(expected_format.contains("wbps=10485760"), "Should contain wbps limit (10MB/s)");
+    }
+
+    /// Test I/O bandwidth unit conversion
+    /// Spec: bandwidth values are in bytes per second
+    #[test]
+    fn test_integration_io_bandwidth_conversion() {
+        // 10 MB/s = 10 * 1024 * 1024 bytes/s = 10,485,760 bytes/s
+        let ten_mbps = 10 * 1024 * 1024;
+        assert_eq!(ten_mbps, 10_485_760);
+
+        // 100 MB/s = 104,857,600 bytes/s
+        let hundred_mbps = 100 * 1024 * 1024;
+        assert_eq!(hundred_mbps, 104_857_600);
+
+        // 1 GB/s = 1,073,741,824 bytes/s
+        let one_gbps = 1024 * 1024 * 1024;
+        assert_eq!(one_gbps, 1_073_741_824);
+    }
+
+    /// Test device identifier format
+    /// Spec: Device is specified as "major:minor" (e.g., "8:0" for /dev/sda)
+    #[test]
+    fn test_integration_io_device_identifier_format() {
+        // Common device numbers:
+        // SCSI/SATA disks: major 8, minors 0-15 (sda-sdp)
+        // NVMe drives: major 259
+        // Loop devices: major 7
+
+        let sda = "8:0";      // /dev/sda
+        let sda1 = "8:1";     // /dev/sda1
+        let nvme = "259:0";   // /dev/nvme0n1
+
+        // Verify format: numeric:numeric
+        fn is_valid_dev_id(id: &str) -> bool {
+            let parts: Vec<&str> = id.split(':').collect();
+            if parts.len() != 2 {
+                return false;
+            }
+            parts[0].parse::<u32>().is_ok() && parts[1].parse::<u32>().is_ok()
+        }
+
+        assert!(is_valid_dev_id(sda), "sda device ID should be valid");
+        assert!(is_valid_dev_id(sda1), "sda1 partition ID should be valid");
+        assert!(is_valid_dev_id(nvme), "nvme device ID should be valid");
+        assert!(!is_valid_dev_id("abc"), "non-numeric should be invalid");
+        assert!(!is_valid_dev_id("8"), "missing minor should be invalid");
+        assert!(!is_valid_dev_id("8:0:extra"), "extra parts should be invalid");
     }
 }

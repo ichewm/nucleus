@@ -118,4 +118,14 @@ pub enum NucleusError {
 
     #[error("Failed to execute with gVisor: {0}")]
     GvisorExecute(String),
+
+    // I/O throttling errors
+    #[error("Invalid I/O limit specification: {0}")]
+    InvalidIoLimit(String),
+
+    #[error("Failed to detect root device: {0}")]
+    RootDeviceDetect(String),
+
+    #[error("Failed to parse device info: {0}")]
+    DeviceParse(String),
 }
