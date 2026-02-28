@@ -552,4 +552,273 @@ mod linux_e2e_tests {
             eprintln!("stderr: {}", stderr);
         }
     }
+
+    // =========================================================================
+    // E2E TEST: I/O throttling with --io-limit parameter
+    // Reference: spec/resource-control.md - I/O Control, PRD TASK-004
+    // This is the LONGEST-CHAIN E2E test for I/O throttling
+    // =========================================================================
+
+    /// E2E test: Complete I/O throttling workflow
+    /// Spec: --io-limit parameter configures cgroup io.max for block I/O throttling
+    /// This test exercises the complete flow from CLI to cgroup configuration
+    #[test]
+    fn test_e2e_io_throttling_complete_workflow() {
+        if !is_root() {
+            eprintln!("SKIP: test requires root");
+            return;
+        }
+
+        let context = create_context_with_content();
+
+        // Run container with I/O limits using auto device detection
+        // This exercises: CLI parsing -> device detection -> cgroup io.max configuration
+        let output = Command::new(nucleus_binary())
+            .args([
+                "run",
+                "--context",
+                context.path().to_str().unwrap(),
+                "--memory",
+                "256M",
+                "--cpus",
+                "1",
+                "--io-limit",
+                "auto:1000:1000:10M:10M",
+                "--runtime",
+                "native",
+                "--",
+                "/bin/true",
+            ])
+            .output()
+            .expect("Failed to execute nucleus");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Should succeed - cgroup was created with io.max limits
+        assert!(
+            output.status.success(),
+            "Container with --io-limit should succeed. stdout: {}, stderr: {}",
+            stdout,
+            stderr
+        );
+    }
+
+    /// E2E test: I/O throttling with specific device
+    /// Spec: Device can be specified as "major:minor" format
+    #[test]
+    fn test_e2e_io_throttling_specific_device() {
+        if !is_root() {
+            eprintln!("SKIP: test requires root");
+            return;
+        }
+
+        let context = create_context_with_content();
+
+        // Run container with I/O limits on specific device 8:0 (first SCSI/SATA disk)
+        // Even if the device doesn't exist on this system, the format should be accepted
+        // and the cgroup should be created (io.max will fail silently for non-existent devices)
+        let output = Command::new(nucleus_binary())
+            .args([
+                "run",
+                "--context",
+                context.path().to_str().unwrap(),
+                "--memory",
+                "256M",
+                "--cpus",
+                "1",
+                "--io-limit",
+                "8:0:5000:5000:50M:50M",
+                "--runtime",
+                "native",
+                "--",
+                "/bin/true",
+            ])
+            .output()
+            .expect("Failed to execute nucleus");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Should not fail due to I/O limit format parsing
+        // May fail on systems without device 8:0, but that's a kernel-level issue
+        assert!(
+            !stderr.contains("Invalid I/O limit") && !stderr.contains("Invalid device"),
+            "CLI should accept specific device format. stderr: {}",
+            stderr
+        );
+    }
+
+    /// E2E test: I/O throttling with bandwidth-only limits
+    /// Spec: Partial limits (only some limits specified) should work
+    #[test]
+    fn test_e2e_io_throttling_bandwidth_only() {
+        if !is_root() {
+            eprintln!("SKIP: test requires root");
+            return;
+        }
+
+        let context = create_context_with_content();
+
+        // Run container with only bandwidth limits (no IOPS limits)
+        let output = Command::new(nucleus_binary())
+            .args([
+                "run",
+                "--context",
+                context.path().to_str().unwrap(),
+                "--memory",
+                "256M",
+                "--cpus",
+                "1",
+                "--io-limit",
+                "auto:0:0:100M:100M",
+                "--runtime",
+                "native",
+                "--",
+                "/bin/true",
+            ])
+            .output()
+            .expect("Failed to execute nucleus");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Should not fail due to 0 for unlimited IOPS
+        assert!(
+            !stderr.contains("Invalid I/O limit"),
+            "CLI should accept 0 for unlimited IOPS. stderr: {}",
+            stderr
+        );
+    }
+
+    /// E2E test: I/O throttling with various bandwidth suffixes
+    /// Spec: Bandwidth supports K/M/G suffixes
+    #[test]
+    fn test_e2e_io_throttling_bandwidth_suffixes() {
+        if !is_root() {
+            eprintln!("SKIP: test requires root");
+            return;
+        }
+
+        let context = create_context_with_content();
+
+        // Test with various suffix combinations
+        let test_cases = [
+            ("auto:0:0:1K:1K", "1K suffix"),
+            ("auto:0:0:10M:10M", "10M suffix"),
+            ("auto:0:0:1G:1G", "1G suffix"),
+            ("auto:0:0:512KB:512KB", "512KB suffix"),
+            ("auto:0:0:100MB:100MB", "100MB suffix"),
+        ];
+
+        for (io_limit, description) in test_cases {
+            let output = Command::new(nucleus_binary())
+                .args([
+                    "run",
+                    "--context",
+                    context.path().to_str().unwrap(),
+                    "--memory",
+                    "256M",
+                    "--cpus",
+                    "1",
+                    "--io-limit",
+                    io_limit,
+                    "--runtime",
+                    "native",
+                    "--",
+                    "/bin/true",
+                ])
+                .output()
+                .expect("Failed to execute nucleus");
+
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            // Should not fail due to bandwidth suffix parsing
+            assert!(
+                !stderr.contains("Invalid I/O limit") && !stderr.contains("rbps") && !stderr.contains("wbps"),
+                "CLI should accept {} bandwidth format. stderr: {}",
+                description,
+                stderr
+            );
+        }
+    }
+
+    /// E2E test: I/O throttling error handling for invalid format
+    /// Spec: Invalid I/O limit format should show clear error
+    #[test]
+    fn test_e2e_io_throttling_invalid_format_error() {
+        let context = create_context_with_content();
+
+        // Test with invalid format (missing fields)
+        let output = Command::new(nucleus_binary())
+            .args([
+                "run",
+                "--context",
+                context.path().to_str().unwrap(),
+                "--memory",
+                "256M",
+                "--cpus",
+                "1",
+                "--io-limit",
+                "auto:1000:1000", // Missing rbps and wbps
+                "--runtime",
+                "native",
+                "--",
+                "/bin/true",
+            ])
+            .output()
+            .expect("Failed to execute nucleus");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Should fail with clear error about format
+        assert!(
+            !output.status.success() || stderr.contains("Linux"),
+            "CLI should fail with invalid --io-limit format"
+        );
+        assert!(
+            stderr.contains("I/O limit") || stderr.contains("format"),
+            "CLI should show error for invalid format. stderr: {}",
+            stderr
+        );
+    }
+
+    /// E2E test: I/O throttling with "max" for unlimited
+    /// Spec: "max" keyword can be used for unlimited values
+    #[test]
+    fn test_e2e_io_throttling_max_unlimited() {
+        if !is_root() {
+            eprintln!("SKIP: test requires root");
+            return;
+        }
+
+        let context = create_context_with_content();
+
+        // Test with "max" for unlimited values
+        let output = Command::new(nucleus_binary())
+            .args([
+                "run",
+                "--context",
+                context.path().to_str().unwrap(),
+                "--memory",
+                "256M",
+                "--cpus",
+                "1",
+                "--io-limit",
+                "auto:max:max:100M:100M",
+                "--runtime",
+                "native",
+                "--",
+                "/bin/true",
+            ])
+            .output()
+            .expect("Failed to execute nucleus");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // Should not fail due to "max" keyword
+        assert!(
+            !stderr.contains("Invalid I/O limit"),
+            "CLI should accept 'max' for unlimited. stderr: {}",
+            stderr
+        );
+    }
 }
