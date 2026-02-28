@@ -115,6 +115,7 @@ fn populate_context(host_path: &Path, container_path: &Path) -> Result<()> {
 
 fn should_include(entry: &DirEntry) -> bool {
     let name = entry.file_name().to_str().unwrap_or("");
+    let name_lower = name.to_lowercase();
 
     // Exclude VCS
     if name == ".git" || name == ".svn" { return false; }
@@ -124,6 +125,22 @@ fn should_include(entry: &DirEntry) -> bool {
 
     // Exclude editor files
     if name.starts_with(".") && name.ends_with(".swp") { return false; }
+
+    // Exclude environment files (may contain secrets)
+    if name.starts_with(".env") { return false; }
+
+    // Exclude credential files (case-insensitive)
+    if name_lower.contains("credential")
+        || name_lower.contains("secret")
+        || name_lower.contains("private")
+    { return false; }
+
+    // Exclude key/certificate files
+    if name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.ends_with(".p12")
+        || name.ends_with(".crt")
+    { return false; }
 
     true
 }

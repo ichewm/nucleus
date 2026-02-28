@@ -22,6 +22,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Utilities
 uuid = { version = "1", features = ["v4"] }
+walkdir = "2"        # For context directory traversal
+which = "6"          # For finding executables on PATH
 
 [dev-dependencies]
 # Testing

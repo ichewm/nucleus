@@ -28,3 +28,24 @@ target
 
 # Claude local settings
 .claude/settings.local.json
+
+# Environment variables (may contain secrets)
+.env
+.env.*
+
+# Secrets and credentials
+credentials.json
+credentials.yaml
+credentials.yml
+secrets.json
+secrets.yaml
+secrets.yml
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.crt
+
+# Logs (may contain sensitive data)
+*.log
