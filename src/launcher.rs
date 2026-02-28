@@ -19,6 +19,7 @@ use nix::sys::wait::{waitpid, WaitStatus};
 use nix::unistd::{execvp, fork, ForkResult};
 
 use crate::cli::RunArgs;
+use crate::cgroup::IoDeviceLimit;
 use crate::error::{NucleusError, Result};
 #[cfg(target_os = "linux")]
 use crate::namespace::NamespaceManager;
@@ -55,11 +56,14 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
         info!("gVisor runtime (runsc) found, will use for execution");
     }
 
+    // Parse I/O limits if specified
+    let io_limits = parse_io_limits(args)?;
+
     // Create cgroup
     let cgroup = crate::cgroup::Cgroup::create(&container_id)?;
 
-    // Configure cgroup with resource limits
-    let cgroup_config = crate::cgroup::CgroupConfig::new(memory_bytes, args.cpus);
+    // Configure cgroup with resource limits (including I/O if specified)
+    let cgroup_config = crate::cgroup::CgroupConfig::with_io_limits(memory_bytes, args.cpus, io_limits);
     cgroup.configure(&cgroup_config)?;
 
     // Create security manager
@@ -210,6 +214,21 @@ fn validate_runtime(runtime: &str) -> Result<()> {
             "Unknown runtime: {}. Supported: native, gvisor",
             runtime
         ))),
+    }
+}
+
+/// Parse I/O limits from CLI arguments
+///
+/// Returns an empty vector if no I/O limits are specified.
+fn parse_io_limits(args: &RunArgs) -> Result<Vec<IoDeviceLimit>> {
+    if let Some(ref io_limit_spec) = args.io_limit {
+        debug!("Parsing I/O limit specification: {}", io_limit_spec);
+        let limit = crate::cgroup::parse_io_limit_spec(io_limit_spec)?;
+        info!("I/O limit configured for device {}: riops={:?}, wiops={:?}, rbps={:?}, wbps={:?}",
+            limit.device, limit.riops, limit.wiops, limit.rbps, limit.wbps);
+        Ok(vec![limit])
+    } else {
+        Ok(Vec::new())
     }
 }
 
