@@ -25,6 +25,11 @@ uuid = { version = "1", features = ["v4"] }
 walkdir = "2"        # For context directory traversal
 which = "6"          # For finding executables on PATH
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Security (Linux-only)
+caps = "0.5"         # For capability management
+seccompiler = "0.5"  # For seccomp filtering
+
 [dev-dependencies]
 # Testing
 tempfile = "3"

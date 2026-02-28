@@ -99,4 +99,23 @@ pub enum NucleusError {
 
     #[error("Failed to chroot: {0}")]
     Chroot(String),
+
+    // Security errors
+    #[error("Failed to drop capabilities: {0}")]
+    CapabilityDrop(String),
+
+    #[error("Failed to set capabilities: {0}")]
+    CapabilitySet(String),
+
+    #[error("Failed to apply seccomp filter: {0}")]
+    SeccompApply(String),
+
+    #[error("Failed to compile seccomp filter: {0}")]
+    SeccompCompile(String),
+
+    #[error("gVisor runtime (runsc) not found: {0}")]
+    GvisorNotFound(String),
+
+    #[error("Failed to execute with gVisor: {0}")]
+    GvisorExecute(String),
 }
