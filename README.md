@@ -56,3 +56,15 @@ nucleus run --runtime gvisor --context ./ctx/ -- ./agent
 # Set a custom hostname for the container
 nucleus run --hostname my-container --context ./ctx/ -- ./agent
 ```
+
+## Context Filtering
+
+When copying context into the container, nucleus automatically excludes sensitive files to prevent accidental exposure of secrets:
+
+**Excluded patterns:**
+- VCS directories: `.git`, `.svn`
+- Build artifacts: `target/`, `node_modules/`
+- Editor files: `.*.swp`
+- Environment files: `.env`, `.env.*`
+- Credential files (case-insensitive): `*credential*`, `*secret*`, `*private*`
+- Key/certificate files: `*.pem`, `*.key`, `*.p12`, `*.crt`

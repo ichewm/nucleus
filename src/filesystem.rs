@@ -14,7 +14,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use walkdir::WalkDir;
 
 use crate::cli::RunArgs;
