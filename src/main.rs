@@ -5,6 +5,7 @@
 mod cli;
 mod cgroup;
 mod error;
+mod filesystem;
 mod launcher;
 mod namespace;
 

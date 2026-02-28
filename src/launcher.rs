@@ -10,7 +10,7 @@
 //!
 //! Note: Full container execution is only supported on Linux.
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 #[cfg(target_os = "linux")]
@@ -18,7 +18,6 @@ use nix::sys::wait::{waitpid, WaitStatus};
 #[cfg(target_os = "linux")]
 use nix::unistd::{execvp, fork, ForkResult};
 
-use crate::cgroup::{Cgroup, CgroupConfig};
 use crate::cli::RunArgs;
 use crate::error::{NucleusError, Result};
 #[cfg(target_os = "linux")]
@@ -202,19 +201,54 @@ fn run_child_process(args: &RunArgs, namespace_manager: &NamespaceManager) {
         std::process::exit(1);
     }
 
-    info!("Child: Executing '{}' with args {:?}", executable, cmd_args);
-
-    // Convert to CString for execvp
-    let exec_cstr = match std::ffi::CString::new(executable) {
-        Ok(s) => s,
+    // Setup filesystem
+    let memory_bytes = match args.memory_bytes() {
+        Ok(bytes) => bytes,
         Err(e) => {
-            error!("Invalid executable name: {}", e);
+            error!("Failed to parse memory limit: {}", e);
             std::process::exit(1);
         }
     };
 
-    let args_cstr: Vec<std::ffi::CString> = std::iter::once(executable)
-        .chain(cmd_args.iter().map(|s| s.as_str()))
+    // Create a unique container root path
+    let container_root = std::env::temp_dir().join(format!("nucleus-{}", generate_container_id()));
+
+    let fs = crate::filesystem::ContainerFilesystem::new(container_root.clone(), memory_bytes);
+
+    // Setup the container filesystem
+    if let Err(e) = fs.setup(args) {
+        error!("Failed to setup filesystem: {}", e);
+        std::process::exit(1);
+    }
+
+    // Copy executable to container
+    let container_exe = match fs.copy_executable(executable) {
+        Ok(path) => path,
+        Err(e) => {
+            error!("Failed to copy executable: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    // Switch root
+    if let Err(e) = fs.switch_root() {
+        error!("Failed to switch root: {}", e);
+        std::process::exit(1);
+    }
+
+    info!("Child: Executing '{}' with args {:?}", container_exe.display(), cmd_args);
+
+    // Convert to CString for execvp
+    let exec_cstr = match std::ffi::CString::new(container_exe.to_string_lossy().into_owned()) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Invalid executable path: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let args_cstr: Vec<std::ffi::CString> = std::iter::once(container_exe.to_string_lossy().into_owned())
+        .chain(cmd_args.iter().map(|s| s.clone()))
         .filter_map(|s| std::ffi::CString::new(s).ok())
         .collect();
 
@@ -224,7 +258,7 @@ fn run_child_process(args: &RunArgs, namespace_manager: &NamespaceManager) {
             // execvp should not return on success
         }
         Err(e) => {
-            error!("Failed to exec '{}': {}", executable, e);
+            error!("Failed to exec '{}': {}", container_exe.display(), e);
             std::process::exit(1);
         }
     }

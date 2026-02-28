@@ -80,4 +80,23 @@ pub enum NucleusError {
 
     #[error("nix error: {0}")]
     Nix(#[from] nix::Error),
+
+    // Filesystem errors
+    #[error("Failed to mount filesystem: {0}")]
+    FilesystemMount(String),
+
+    #[error("Failed to create filesystem layout: {0}")]
+    FilesystemLayout(String),
+
+    #[error("Failed to create device node: {0}")]
+    DeviceNode(String),
+
+    #[error("Failed to copy context from {0}: {1}")]
+    ContextCopy(PathBuf, String),
+
+    #[error("Failed to pivot_root: {0}")]
+    PivotRoot(String),
+
+    #[error("Failed to chroot: {0}")]
+    Chroot(String),
 }
