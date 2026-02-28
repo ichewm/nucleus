@@ -59,29 +59,42 @@ Minimal set if needed:
 
 ### 3. Seccomp (Syscall Filtering)
 
-**Whitelist approach:**
+**Blocklist approach:**
 
-Allowed syscalls:
-```
-read, write, open, openat, close, stat, fstat, lstat
-mmap, munmap, mprotect, brk
-clone, fork, vfork, execve, wait4, exit, exit_group
-getpid, gettid, getuid, getgid
-socket, connect, send, recv (if networking)
-...
-```
+By default, all syscalls are allowed. Dangerous syscalls are blocked with a KILL action.
 
 Blocked syscalls:
 ```
-ptrace          # Process tracing
-kexec_load      # Load new kernel
-add_key         # Kernel keyring
+ptrace              # Process tracing/debugging
+kexec_load          # Load new kernel
+kexec_file_load     # Load new kernel (file-based)
+init_module         # Load kernel module
+finit_module        # Load kernel module (file-based)
+delete_module       # Unload kernel module
+add_key             # Kernel keyring operations
 request_key
 keyctl
-bpf             # eBPF program loading
-perf_event_open # Performance monitoring
-userfaultfd     # User fault handling
-io_uring        # Async I/O (potential escape vector)
+bpf                 # eBPF program loading
+perf_event_open     # Performance monitoring
+userfaultfd         # User fault handling
+io_uring_setup      # Async I/O (potential escape vector)
+io_uring_enter
+io_uring_register
+dup3                # File descriptor replacement
+clock_settime       # Clock management
+clock_adjtime
+sysctl              # System configuration
+acct                # Process accounting
+swapon              # Swap management
+swapoff
+reboot              # System reboot
+iopl                # Hardware I/O permissions
+ioperm
+```
+
+Additional syscalls blocked in **strict profile**:
+```
+memfd_create, mlock, mlockall
 ```
 
 ### 4. cgroups (Resource Limits)
@@ -187,7 +200,7 @@ When `--runtime gvisor`:
 1. **Fail closed** - Deny by default, allow on opt-in
 2. **Validate all inputs** - Paths, resource limits, etc.
 3. **Use safe Rust** - Avoid `unsafe` except for FFI
-4. **Audit syscall whitelist** - Review seccomp filter regularly
+4. **Audit syscall blocklist** - Review seccomp filter regularly
 5. **Test against exploits** - Run security benchmarks
 
 ## Comparison to Docker/runc
@@ -196,7 +209,7 @@ When `--runtime gvisor`:
 |------------------|-------------|---------|
 | Namespaces | All 6 | All 6 |
 | Capabilities | Drop most | Drop all (default) |
-| Seccomp | Whitelist (~300) | Whitelist (~100) |
+| Seccomp | Whitelist (~300) | Blocklist (~30) |
 | cgroups | v1/v2 | v2 only |
 | Rootless | Yes | Yes (planned) |
 | gVisor | Optional | Optional |
