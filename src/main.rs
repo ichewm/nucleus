@@ -6,6 +6,7 @@ mod cli;
 mod cgroup;
 mod error;
 mod filesystem;
+mod gvisor;
 mod launcher;
 mod namespace;
 mod security;

@@ -52,8 +52,20 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
                 "runsc not found in PATH. Install gVisor from https://gvisor.dev/docs/user_guide/install/".to_string()
             ));
         }
-        info!("gVisor runtime (runsc) found, will use for execution");
+        info!("gVisor runtime (runsc) found, delegating to gVisor executor");
+
+        // Execute with gVisor
+        let exit_code = crate::gvisor::run_with_gvisor(&container_id, args, memory_bytes)?;
+
+        if exit_code != 0 {
+            return Err(NucleusError::ChildExit(exit_code));
+        }
+
+        info!("Container execution completed successfully via gVisor");
+        return Ok(());
     }
+
+    // Native runtime execution (fork + exec)
 
     // Create cgroup
     let cgroup = crate::cgroup::Cgroup::create(&container_id)?;
