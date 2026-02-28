@@ -173,7 +173,8 @@ fn test_e2e_container_workflow_with_hostname() {
 }
 
 // =============================================================================
-// E2E TEST: With gVisor runtime (noted as not yet implemented)
+// E2E TEST: With gVisor runtime
+// gVisor runtime is now implemented - if runsc is not available, a clear error is shown
 // =============================================================================
 
 #[test]
@@ -200,13 +201,28 @@ fn test_e2e_container_workflow_with_gvisor_runtime() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // gVisor runtime should be accepted (but noted as not implemented)
-    // Should not fail with "Unknown runtime" error
-    if !is_linux() {
-        // Will fail due to namespace requirement
+    // gVisor runtime should be accepted (not "Unknown runtime")
+    // If runsc is not available, should show a clear error message
+    // Should NOT fail with "Unknown runtime" error
+    assert!(
+        !stderr.contains("Unknown runtime"),
+        "gVisor should be accepted as valid runtime. stderr: {}",
+        stderr
+    );
+
+    // If runsc is not available, should show helpful message
+    if stderr.contains("GvisorNotFound") || stderr.contains("runsc not found") {
+        // This is expected behavior when gVisor is not installed
         assert!(
-            stderr.contains("Linux") || stderr.contains("namespace"),
-            "gVisor should be accepted runtime. stderr: {}",
+            stderr.contains("gvisor.dev") || stderr.contains("install"),
+            "Should include installation instructions. stderr: {}",
+            stderr
+        );
+    } else if !is_linux() {
+        // On non-Linux without gVisor, will fail due to namespace requirement
+        assert!(
+            stderr.contains("Linux") || stderr.contains("namespace") || stderr.contains("GvisorNotFound"),
+            "Should indicate Linux requirement or gVisor not found. stderr: {}",
             stderr
         );
     }

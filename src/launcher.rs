@@ -5,12 +5,12 @@
 //! 2. Create cgroup for resource limits
 //! 3. Unshare namespaces for isolation
 //! 4. Fork child process
-//! 5. Child: Configure namespaces, execute command
+//! 5. Child: Configure namespaces, drop capabilities, apply seccomp, execute command
 //! 6. Parent: Attach child to cgroup, wait for completion, cleanup
 //!
 //! Note: Full container execution is only supported on Linux.
 
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 #[cfg(target_os = "linux")]
@@ -22,6 +22,7 @@ use crate::cli::RunArgs;
 use crate::error::{NucleusError, Result};
 #[cfg(target_os = "linux")]
 use crate::namespace::NamespaceManager;
+use crate::security::{SecurityManager, SecurityProfile};
 
 /// Run a container with the given arguments
 #[cfg(target_os = "linux")]
@@ -31,6 +32,9 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
     // Validate arguments
     validate_args(args)?;
 
+    // Validate runtime option (must be 'native' or 'gvisor')
+    validate_runtime(&args.runtime)?;
+
     // Parse memory limit
     let memory_bytes = args.memory_bytes()
         .map_err(NucleusError::MemoryParse)?;
@@ -39,15 +43,28 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
     let container_id = generate_container_id();
     info!("Container ID: {}", container_id);
 
+    // Check runtime and handle gVisor
+    let use_gvisor = args.runtime == "gvisor";
+    if use_gvisor {
+        info!("gVisor runtime requested");
+        if !crate::security::is_gvisor_available() {
+            return Err(NucleusError::GvisorNotFound(
+                "runsc not found in PATH. Install gVisor from https://gvisor.dev/docs/user_guide/install/".to_string()
+            ));
+        }
+        info!("gVisor runtime (runsc) found, will use for execution");
+    }
+
     // Create cgroup
-    let cgroup = Cgroup::create(&container_id)?;
+    let cgroup = crate::cgroup::Cgroup::create(&container_id)?;
 
     // Configure cgroup with resource limits
-    let cgroup_config = CgroupConfig::new(memory_bytes, args.cpus);
+    let cgroup_config = crate::cgroup::CgroupConfig::new(memory_bytes, args.cpus);
     cgroup.configure(&cgroup_config)?;
 
-    // Validate runtime
-    validate_runtime(&args.runtime)?;
+    // Create security manager
+    let mut security_manager = SecurityManager::default_profile(use_gvisor);
+    security_manager.prepare()?;
 
     // Create namespace manager
     let namespace_manager = NamespaceManager::new(args.hostname.clone());
@@ -65,7 +82,7 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
         }
         Ok(ForkResult::Child) => {
             // Child process
-            run_child_process(args, &namespace_manager);
+            run_child_process(args, &namespace_manager, &security_manager);
             // execvp should not return; if it does, exit with error
             std::process::exit(1);
         }
@@ -89,7 +106,12 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
             }
         }
         Ok(WaitStatus::Signaled(_pid, signal, _coredump)) => {
-            warn!("Child process killed by signal: {}", signal);
+            // Check if killed by seccomp (SIGKILL from blocked syscall)
+            if signal == nix::sys::signal::Signal::SIGKILL {
+                warn!("Child process killed by SIGKILL - possibly blocked syscall via seccomp");
+            } else {
+                warn!("Child process killed by signal: {}", signal);
+            }
             return Err(NucleusError::ChildSignal(signal as i32));
         }
         Ok(status) => {
@@ -114,8 +136,15 @@ pub fn run_container(args: &RunArgs) -> Result<()> {
     // Validate arguments
     validate_args(args)?;
 
-    // Validate runtime
+    // Validate runtime option (must be 'native' or 'gvisor')
     validate_runtime(&args.runtime)?;
+
+    // Validate gVisor availability if requested
+    if args.runtime == "gvisor" && !crate::security::is_gvisor_available() {
+        return Err(NucleusError::GvisorNotFound(
+            "runsc not found in PATH. Install gVisor from https://gvisor.dev/docs/user_guide/install/".to_string()
+        ));
+    }
 
     // On non-Linux platforms, we cannot actually run containers
     error!("Container execution is only supported on Linux");
@@ -174,7 +203,7 @@ fn validate_runtime(runtime: &str) -> Result<()> {
             Ok(())
         }
         "gvisor" => {
-            info!("gVisor runtime requested (not yet implemented, using native)");
+            debug!("gVisor runtime requested");
             Ok(())
         }
         _ => Err(NucleusError::InvalidRuntime(format!(
@@ -186,7 +215,7 @@ fn validate_runtime(runtime: &str) -> Result<()> {
 
 /// Run the child process (executed after fork in the child)
 #[cfg(target_os = "linux")]
-fn run_child_process(args: &RunArgs, namespace_manager: &NamespaceManager) {
+fn run_child_process(args: &RunArgs, namespace_manager: &NamespaceManager, security_manager: &SecurityManager) {
     // Set hostname if specified (must be done after unshare)
     if let Err(e) = namespace_manager.set_hostname() {
         error!("Failed to set hostname: {}", e);
@@ -233,6 +262,13 @@ fn run_child_process(args: &RunArgs, namespace_manager: &NamespaceManager) {
     // Switch root
     if let Err(e) = fs.switch_root() {
         error!("Failed to switch root: {}", e);
+        std::process::exit(1);
+    }
+
+    // Apply security settings (capabilities, seccomp)
+    // This must be done after filesystem setup but before exec
+    if let Err(e) = security_manager.apply() {
+        error!("Failed to apply security settings: {}", e);
         std::process::exit(1);
     }
 

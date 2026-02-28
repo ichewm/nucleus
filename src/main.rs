@@ -8,6 +8,7 @@ mod error;
 mod filesystem;
 mod launcher;
 mod namespace;
+mod security;
 
 use clap::Parser;
 use cli::{Cli, Commands};
