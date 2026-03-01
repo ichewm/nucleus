@@ -35,6 +35,27 @@ Container filesystem is backed by tmpfs/ramfs and pre-populated with context fil
 
 This is a Linux-only tool by design — the isolation primitives are kernel-specific.
 
+## gVisor Requirements
+
+To use the `--runtime gvisor` option, you must have gVisor's `runsc` runtime installed:
+
+1. **Install gVisor**: Follow the official installation guide at https://gvisor.dev/docs/user_guide/install/
+
+2. **Verify installation**: Ensure `runsc` is in your PATH:
+   ```bash
+   which runsc
+   ```
+
+3. **Usage**:
+   ```bash
+   nucleus run --runtime gvisor --context ./ctx/ -- ./agent
+   ```
+
+**Notes:**
+- gVisor uses the ptrace platform by default (no KVM required)
+- Container state is stored in `/tmp/nucleus-runsc/`
+- Set `NUCLEUS_GVISOR_DEBUG=1` environment variable for verbose runsc logging
+
 ## Installation
 
 ```bash
