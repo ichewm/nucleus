@@ -575,6 +575,7 @@ mod tests {
             cpus: 1.0,
             runtime: "gvisor".to_string(),
             hostname: Some("testhost".to_string()),
+            io_limit: None,
             command: vec!["/bin/echo".to_string(), "hello".to_string()],
         };
 
