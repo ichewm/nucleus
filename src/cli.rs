@@ -41,6 +41,21 @@ pub struct RunArgs {
     #[arg(short = 'H', long, value_name = "NAME")]
     pub hostname: Option<String>,
 
+    /// I/O throttling limits for block devices
+    ///
+    /// Format: <device>:<riops>:<wiops>:<rbps>:<wbps>
+    /// - device: Either "auto" to detect root device, or "major:minor" (e.g., "8:0")
+    /// - riops: Read IOPS limit (0 or "max" for unlimited)
+    /// - wiops: Write IOPS limit (0 or "max" for unlimited)
+    /// - rbps: Read bandwidth limit (supports K/M/G suffixes, e.g., "10M")
+    /// - wbps: Write bandwidth limit (supports K/M/G suffixes)
+    ///
+    /// Examples:
+    /// --io-limit auto:1000:1000:10M:10M     # Auto-detect root device
+    /// --io-limit 8:0:0:0:50M:50M            # Specific device
+    #[arg(long, value_name = "SPEC")]
+    pub io_limit: Option<String>,
+
     /// Command to execute in the container
     #[arg(required = true, trailing_var_arg = true)]
     pub command: Vec<String>,

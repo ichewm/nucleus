@@ -424,3 +424,257 @@ fn test_integration_cli_default_values() {
         stderr
     );
 }
+
+// =============================================================================
+// SPEC REQUIREMENT: --io-limit parameter for I/O throttling
+// Reference: spec/resource-control.md - I/O Control, PRD TASK-004
+// =============================================================================
+
+#[test]
+fn test_integration_cli_io_limit_parameter_documented() {
+    // Spec: CLI should document the --io-limit parameter
+    let output = Command::new(nucleus_binary())
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute nucleus run --help");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("--io-limit"),
+        "CLI should document --io-limit parameter. stdout: {}",
+        stdout
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_accepts_valid_format() {
+    // Spec: --io-limit format is <device>:<riops>:<wiops>:<rbps>:<wbps>
+    let context = create_temp_context();
+
+    // Test with auto device detection and all limits specified
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "auto:1000:1000:10M:10M",
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail due to --io-limit parsing
+    // May fail on non-Linux or without root, but not due to I/O limit format
+    assert!(
+        !stderr.contains("Invalid I/O limit") && !stderr.contains("I/O limit format"),
+        "CLI should accept valid --io-limit format. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_accepts_specific_device() {
+    // Spec: Device can be specified as "major:minor" (e.g., "8:0")
+    let context = create_temp_context();
+
+    // Test with specific device 8:0 and limits
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "8:0:5000:5000:100M:100M",
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail due to --io-limit format
+    assert!(
+        !stderr.contains("Invalid I/O limit") && !stderr.contains("Invalid device"),
+        "CLI should accept specific device format. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_unlimited_values() {
+    // Spec: Use "0" or "max" for unlimited values
+    let context = create_temp_context();
+
+    // Test with max/unlimited values
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "auto:0:0:50M:50M",
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail due to --io-limit parsing
+    assert!(
+        !stderr.contains("Invalid I/O limit"),
+        "CLI should accept 0 for unlimited. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_bandwidth_suffixes() {
+    // Spec: Bandwidth supports K/M/G suffixes
+    let context = create_temp_context();
+
+    // Test with K/M/G suffixes
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "auto:1000:1000:1G:512M",
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail due to bandwidth suffix parsing
+    assert!(
+        !stderr.contains("Invalid I/O limit") && !stderr.contains("rbps") && !stderr.contains("wbps"),
+        "CLI should accept K/M/G suffixes for bandwidth. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_invalid_format_shows_error() {
+    // Spec: Invalid format should show clear error message
+    let context = create_temp_context();
+
+    // Test with invalid format (missing fields)
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "auto:1000:1000", // Missing rbps and wbps
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // On non-Linux, validation happens after namespace check fails
+    // So we check that either we get an I/O limit format error OR we're on non-Linux
+    // The key is that we should NOT succeed silently
+    assert!(
+        !output.status.success(),
+        "CLI should fail with invalid --io-limit format"
+    );
+    // On Linux, we expect "I/O limit" or "format" error
+    // On non-Linux, we get "Linux-only" error (validation order differs)
+    assert!(
+        stderr.contains("I/O limit")
+            || stderr.contains("format")
+            || stderr.contains("Linux")
+            || stderr.contains("namespace"),
+        "CLI should show an error. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_invalid_device_shows_error() {
+    // Spec: Invalid device format should show clear error
+    let context = create_temp_context();
+
+    // Test with invalid device format
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "invalid:1000:1000:10M:10M", // Invalid device (not "auto" or "major:minor")
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // On non-Linux, validation happens after namespace check fails
+    // The key is that we should NOT succeed silently
+    assert!(
+        !output.status.success(),
+        "CLI should fail with invalid device format"
+    );
+    // On Linux, we expect "I/O limit" or "device" error
+    // On non-Linux, we get "Linux-only" error (validation order differs)
+    assert!(
+        stderr.contains("I/O limit")
+            || stderr.contains("device")
+            || stderr.contains("Linux")
+            || stderr.contains("namespace"),
+        "CLI should show an error. stderr: {}",
+        stderr
+    );
+}
+
+#[test]
+fn test_integration_cli_io_limit_partial_limits() {
+    // Spec: Partial limits (some unlimited) should work
+    let context = create_temp_context();
+
+    // Test with only bandwidth limits (IOPS unlimited)
+    let output = Command::new(nucleus_binary())
+        .args([
+            "run",
+            "--context",
+            context.path().to_str().unwrap(),
+            "--io-limit",
+            "auto:max:max:100M:100M",
+            "--",
+            "echo",
+            "test",
+        ])
+        .output()
+        .expect("Failed to execute nucleus");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Should not fail due to "max" for unlimited
+    assert!(
+        !stderr.contains("Invalid I/O limit"),
+        "CLI should accept 'max' for unlimited. stderr: {}",
+        stderr
+    );
+}

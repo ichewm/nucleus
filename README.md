@@ -76,6 +76,12 @@ nucleus run --runtime gvisor --context ./ctx/ -- ./agent
 
 # Set a custom hostname for the container
 nucleus run --hostname my-container --context ./ctx/ -- ./agent
+
+# Set I/O throttling limits (auto-detect root device)
+nucleus run --io-limit auto:1000:1000:10M:10M --context ./ctx/ -- ./agent
+
+# Set I/O limits for a specific device (major:minor format)
+nucleus run --io-limit 8:0:5000:5000:50M:50M --context ./ctx/ -- ./agent
 ```
 
 ## Context Filtering
