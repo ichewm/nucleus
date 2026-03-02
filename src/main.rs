@@ -2,21 +2,13 @@
 //!
 //! A minimalist container runtime designed specifically for AI agents running on Linux.
 
-mod cli;
-mod cgroup;
-mod error;
-mod filesystem;
-mod gvisor;
-mod launcher;
-mod namespace;
-mod security;
-
 use clap::Parser;
-use cli::{Cli, Commands};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
-use crate::error::Result;
+use nucleus::cli::{Cli, Commands};
+use nucleus::error::Result;
+use nucleus::launcher;
 
 fn main() -> Result<()> {
     // Initialize tracing/logging
