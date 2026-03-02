@@ -344,6 +344,7 @@ dependencies = [
  "clap",
  "nix",
  "seccompiler",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tracing",

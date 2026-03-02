@@ -20,34 +20,48 @@ Nucleus is a minimalist container runtime designed for AI agent workloads. Unlik
 │  (single binary, no daemon, direct kernel interaction) │
 └────────────────────┬────────────────────────────────────┘
                      │
-                     ├─> Container Launcher
-                     │   ├─> Namespace Setup (unshare)
-                     │   ├─> cgroup Configuration
-                     │   ├─> Filesystem Mount (tmpfs)
-                     │   ├─> Context Population
-                     │   └─> Process Execution
+                     ├─> Runtime Selection
+                     │   ├─> --runtime native (default)
+                     │   └─> --runtime gvisor (enhanced isolation)
                      │
-                     ├─> Isolation Layer
-                     │   ├─> PID namespace
-                     │   ├─> Mount namespace
-                     │   ├─> Network namespace
-                     │   ├─> UTS namespace
-                     │   ├─> IPC namespace
-                     │   └─> User namespace
+                     ├─> Native Runtime Path
+                     │   ├─> Container Launcher
+                     │   │   ├─> Namespace Setup (unshare)
+                     │   │   ├─> cgroup Configuration
+                     │   │   ├─> Filesystem Mount (tmpfs)
+                     │   │   ├─> Context Population
+                     │   │   └─> Process Execution
+                     │   │
+                     │   ├─> Isolation Layer
+                     │   │   ├─> PID namespace
+                     │   │   ├─> Mount namespace
+                     │   │   ├─> Network namespace
+                     │   │   ├─> UTS namespace
+                     │   │   ├─> IPC namespace
+                     │   │   └─> User namespace
+                     │   │
+                     │   ├─> Resource Control
+                     │   │   ├─> cgroup v2 (memory, cpu, io)
+                     │   │   └─> Resource limits enforcement
+                     │   │
+                     │   ├─> Security Enforcement
+                     │   │   ├─> Capability dropping (cap_set)
+                     │   │   └─> seccomp filters
+                     │   │
+                     │   └─> Filesystem Layer
+                     │       ├─> tmpfs/ramfs root
+                     │       ├─> Context pre-population
+                     │       └─> Bind mounts (optional)
                      │
-                     ├─> Resource Control
-                     │   ├─> cgroup v2 (memory, cpu, io)
-                     │   └─> Resource limits enforcement
-                     │
-                     ├─> Security Enforcement
-                     │   ├─> Capability dropping (cap_set)
-                     │   ├─> seccomp filters
-                     │   └─> Optional gVisor integration
-                     │
-                     └─> Filesystem Layer
-                         ├─> tmpfs/ramfs root
-                         ├─> Context pre-population
-                         └─> Bind mounts (optional)
+                     └─> gVisor Runtime Path
+                         ├─> OCI Bundle Generation
+                         │   ├─> config.json (OCI runtime spec)
+                         │   └─> rootfs setup
+                         └─> runsc Lifecycle
+                             ├─> create (stopped container)
+                             ├─> start (begin execution)
+                             ├─> wait (completion)
+                             └─> delete (cleanup)
 ```
 
 ## Components
@@ -135,9 +149,34 @@ Defense-in-depth security model.
 - Use `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER)`
 
 **gVisor (optional):**
-- Run with runsc for application kernel
-- Syscall interception and emulation
-- Reduced kernel attack surface
+- Alternative runtime via `--runtime gvisor` (see gVisor Runtime component)
+
+### 6. gVisor Runtime
+
+Alternative container runtime using gVisor's application kernel for enhanced isolation.
+
+**When enabled:**
+- Use `--runtime gvisor` flag
+- Bypasses native namespace/cgroup execution
+- Delegates to runsc for container lifecycle
+
+**OCI Bundle Generation:**
+- Creates compliant OCI runtime bundle at `/tmp/nucleus-oci-<id>/`
+- Generates `config.json` with namespaces, resources, process config
+- Sets up rootfs with context, minimal /bin, /dev, /proc
+
+**Lifecycle Management:**
+```
+runsc create  → Create container (stopped state)
+runsc start   → Begin execution
+runsc wait    → Wait for completion
+runsc delete  → Cleanup container state
+```
+
+**Implementation:**
+- Uses ptrace platform (no KVM required)
+- Container state stored in `/tmp/nucleus-runsc/`
+- Set `NUCLEUS_GVISOR_DEBUG=1` for verbose logging
 
 ## Execution Flow
 
@@ -201,6 +240,5 @@ Defense-in-depth security model.
 
 - **Attach command** - `nucleus attach <id>` to enter running container
 - **Resource monitoring** - Real-time cgroup stats
-- **gVisor by default** - Enhanced security boundary
 - **Context streaming** - Lazy-load large contexts
 - **Snapshot/restore** - CRIU integration for checkpointing

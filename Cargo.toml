@@ -33,3 +33,4 @@ seccompiler = "0.5"  # For seccomp filtering
 [dev-dependencies]
 # Testing
 tempfile = "3"
+serde_json = "1"

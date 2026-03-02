@@ -123,8 +123,8 @@ impl OciBundle {
         Ok(self.bundle_dir.clone())
     }
 
-    /// Generate OCI configuration JSON from CLI arguments
-    fn generate_config_json(&self, args: &RunArgs, memory_bytes: u64) -> String {
+    /// Generate OCI configuration JSON from CLI arguments (exposed for testing)
+    pub fn generate_config_json(&self, args: &RunArgs, memory_bytes: u64) -> String {
         // Build OCI config as JSON
         // This follows the OCI runtime spec: https://github.com/opencontainers/runtime-spec
         let (executable, cmd_args) = args.command_parts();
